@@ -1,0 +1,268 @@
+---
+title: "Airbnb Text Mining"
+author: "Jolene Lim"
+output: html_document
+---
+
+# Setup
+```{r, message = FALSE}
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(tm)
+library(tidytext)
+library(topicmodels)
+library(ggplot2)
+```
+
+# Load Data
+```{r, message = FALSE, warning = FALSE}
+reviews <- readr::read_csv("reviews.csv", progress = FALSE)
+listings <- readr::read_csv("listings.csv", progress = FALSE)
+```
+
+# Data Processing 
+As the dataset is very large, we will focus on reviews in Manhattan in 2019. For the purposes of the analysis, only English reviews will be used.
+
+```{r}
+# extract listings which are in Manhattan
+MN_id <- listings %>%
+  filter(neighbourhood_group_cleansed == "Manhattan") %>%
+  select(id) %>%
+  unique() %>% unlist()
+
+# filter
+reviews <- reviews %>%
+  filter(lubridate::year(date) == 2019) %>%
+  filter(listing_id %in% MN_id) %>%
+  filter(cld3::detect_language(comments) == "en")
+```
+
+We will tokenize the `reviews` dataframe such that each word is a row.
+
+```{r}
+# tokenize
+reviews_t <- unnest_tokens(reviews, word, comments)
+
+# create custom stop words
+data("stop_words")
+stop_words <- stop_words %>%
+  bind_rows(c(word = "apartment", lexicon = NA_character_),
+            c(word = "stay", lexicon = NA_character_))
+
+# remove stop words and create counts
+reviews_count <- reviews_t %>%
+  anti_join(stop_words, by = "word") %>%
+  group_by(listing_id, id, word) %>%
+  summarize(count = n())
+```
+
+# Topic Modelling
+The question: What are the most common topics discussed in reviews, and how might it differ by listing type?
+
+First we will weigh each word by its term-frequency/inverse-document-frequency (tf-idf). This is a method of prioritizing words that appear commonly given its rank.
+```{r}
+reviews_count <- bind_tf_idf(reviews_count, "word", "id", "count")
+reviews_count <- reviews_count %>%
+  unite("doc", "listing_id", "id", sep = "-")
+```
+
+Next we perform Latent Dirichlet Allocation (LDA) on the reviews data. We allow for 3 topics. 
+```{r}
+# cast to DTM
+reviews_dtm <- cast_dtm(reviews_count, "doc", "word", "count")
+
+# LDA
+reviews_lda <- LDA(reviews_dtm, k = 3, control = list(seed = 4111))
+
+# convert to tidy dataframe
+reviews_topics <- tidy(reviews_lda, matrix = "beta")
+```
+
+## What are the types of topics found in AirBnb reviews?
+```{r}
+reviews_topics %>%
+  group_by(topic) %>%
+  top_n(20, beta) %>%
+  arrange(desc(beta), .by_group = TRUE) %>%
+  ggplot(., aes(x = reorder_within(term, beta, topic), y = beta, fill = factor(topic))) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~ topic, scales = "free") +
+    scale_x_reordered() +
+    coord_flip() +
+    labs(title = "Most Important Words in Each Topic",
+         y = "Importance (beta)", x = "Word") +
+    theme_bw()
+```
+
+The topics seem all touch on themes I would have expected, namely quality of the apartment, location, and check-in/host interactions. Rather, the topics seem to reveal the different priorities of guests, as such:
+
+| Topic | Priorities | Indicative Keywords |
+| :---: | :--- | :--- |
+| 1 | Location + Host | location, host, subway, convenient, communication |
+| 2 | Location + Space + Host | location, clean, kitchen, check, friendly |
+| 3 | Location + Space | subway, nyc, restaurants, bathroom |
+
+To confirm these, the differences between topics are also checked. 
+
+```{r}
+reviews_topics_s <- reviews_topics %>%
+  mutate(topic = paste("topic", topic, sep = "")) %>%
+  spread(topic, beta) %>%
+  filter(., topic1 > 0.001 | topic2 > 0.001 | topic3 > 0.001) %>%
+  mutate(ratio12 = log(topic1/topic2),
+         ratio13 = log(topic1/topic3),
+         ratio23 = log(topic2/topic3))
+
+plot12 <- reviews_topics_s %>%
+  arrange(desc(ratio12)) %>%
+  slice(c(2:6, (nrow(.) -  4):nrow(.))) %>%
+  ggplot(aes(x = reorder_within(term, ratio12, term), y = ratio12)) +
+    geom_col() +
+    scale_x_reordered() +
+    coord_flip() +
+    labs(x = "Term", title = "Ratio of Topic 1 to Topic 2")
+
+plot23 <- reviews_topics_s %>%
+  arrange(desc(ratio23)) %>%
+  slice(c(2:6, (nrow(.) -  4):nrow(.))) %>%
+  ggplot(aes(x = reorder_within(term, ratio23, term), y = ratio23)) +
+    geom_col() +
+    scale_x_reordered() +
+    coord_flip() +
+    labs(x = "Term", title = "Ratio of Topic 2 to Topic 3")
+
+plot13 <- reviews_topics_s %>%
+  arrange(desc(ratio13)) %>%
+  slice(c(2:6, (nrow(.) -  4):nrow(.))) %>%
+  ggplot(aes(x = reorder_within(term, ratio13, term), y = ratio13)) +
+    geom_col() +
+    scale_x_reordered() +
+    coord_flip() +
+    labs(x = "Term", title = "Ratio of Topic 1 to Topic 3")
+
+cowplot::plot_grid(plot12, plot13, plot23)
+```
+Topic 1 clearly does seem to pertain more to the host than Topic 2 and Topic 3, which both focus more on location. Topic 2 also relates more to the host than in Topic 3. 
+
+## Do the types of topics relate to the type of listings?
+
+First I want to examine the frequency of each topic is different by the number of people accomodated in the listing. I expect some differences may exist, e.g. larger spaces might be meant for families who value the space and host more (hence more topic 2).
+```{r}
+review_docs_topic <- tidy(reviews_lda, matrix = "gamma") %>%
+  mutate(topic = factor(topic, levels = 1:3, labels = c("T1", "T2", "T3"))) %>%
+  spread(topic, gamma) %>%
+  separate(document, c("listing_id", "id"), sep = "-") %>%
+  mutate(listing_id = as.numeric(listing_id),
+         id = as.numeric(id))
+
+listings_var <- listings %>%
+  filter(neighbourhood_group_cleansed == "Manhattan") %>%
+  select(id, neighbourhood_cleansed, zipcode,
+         latitude, longitude, accommodates)
+
+listing_topics <- review_docs_topic %>%
+  group_by(listing_id) %>%
+  summarize(topic_1 = mean(T1), topic_2 = mean(T2), topic_3 = mean(T3)) %>%
+  left_join(listings_var, by = c("listing_id" = "id"))
+```
+
+
+```{r}
+listing_topics %>%
+  gather(key = "topic", value = "proportion", c("topic_1", "topic_2", "topic_3")) %>%
+  ggplot(aes(x = accommodates, y = proportion)) +
+    geom_point() +
+    facet_wrap(~ topic) +
+    theme_bw()
+```
+
+Unfortuntately, there aren't any discernable patterns. The only thing of note is that on average, the proportion of Topic 2 is higher among smaller apartments. This is likely to be the case simply as most  guests stay in smaller apartments and Topic 2 concerns all the basic issues guests care about.
+
+# Sentiment Analysis
+What are the most common sentiments expressed in reviews, and how might it differ by listing type?
+
+```{r}
+sentiments <- get_sentiments("nrc")
+
+reviews_count <- reviews_count %>%
+  left_join(sentiments)
+```
+
+Overall, top 10 most common sentiments (and a common word associated with it) are:
+
+```{r}
+reviews_count %>%
+  group_by(sentiment) %>%
+  arrange(desc(count)) %>%
+  summarize(n_reviews = n(), common_word = first(word)) %>%
+  arrange(desc(n_reviews)) %>%
+  slice(2:6)
+```
+Unsurprisingly, an overwhelming amount of the sentiments are positive ones.
+
+Is the proportion of negative sentiments related to location of listing?
+```{r, message = FALSE}
+library(sf)
+
+listings_sf <- reviews_count %>%
+  separate("doc", c("listing_id", "id"), sep = "-") %>%
+  group_by(listing_id, sentiment) %>%
+  summarize(count = n()) %>%
+  mutate(prop = count / sum(count) * 100) %>%
+  ungroup() %>%
+  mutate(listing_id = as.integer(listing_id)) %>%
+  filter(sentiment == "negative") %>%
+  left_join(listings_var, by = c("listing_id" = "id"))
+
+listings_sf <- listings_sf %>%
+  st_as_sf(coords = c("longitude", "latitude")) %>%
+  st_set_crs(4326) %>%
+  st_transform(2263)
+
+listings_sf <- sp::SpatialPointsDataFrame(listings_sf[ , c("longitude", "latitude")], 
+                                          listings_sf[ , 1:ncol(listings_sf)],
+                                          proj4string = sp::CRS("+init=epsg:2263"))
+
+nyc_areas <- httr::GET("http://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/nynta/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=geojson") %>%
+  httr::content() %>%
+  rgdal::readOGR()
+
+nyc_areas <- nyc_areas[nyc_areas@data$BoroName == "Manhattan", ] %>%
+  st_as_sf() %>%
+  st_transform(crs = 2263)
+
+sentiments_g <- st_join(nyc_areas, listings_sf) %>%
+  group_by(NTACode, NTAName) %>%
+  summarize(prop = mean(prop)) %>%
+  st_transform(4326)
+
+# plot
+library(leaflet)
+binpal_seq <- colorQuantile("YlOrRd", sentiments_g$prop)
+popup <- paste0("<b>Neighborhood:</b> ", sentiments_g$NTAName, "<br>",
+               "<b>Prop. of Negative Sentiments:</b> ", round(sentiments_g$prop, 2), "%")
+
+leaflet(sentiments_g) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  
+  # mean length
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+              opacity = 1.0, fillOpacity = 0.5,
+              fillColor = ~ binpal_seq(sentiments_g$prop),
+              popup = popup) %>%
+  addLegend("bottomright", pal = binpal_seq, values = ~ prop,
+            title = "Mean Proportion of Negative Sentiments in Neighborhoods",
+            opacity = 1)
+  
+```
+
+The average proportion of negative sentiments is higher in the more populated neighborhoods. This suggests that negative sentiments may be associated with small spaces or noisy areas. Nonetheless, it's worth noting that the proportion of negative sentiments is roughly similar acorss neighborhoods.
+
+# Conclusions + Reflections!
+The results of the topic modelling process was not very clear. This might be because from the beginning, there are not that many discernable issues raised in reviews-- most will cover issues around the location, host and quality of the space. 
+
+This project still has many improvements to make, but was a good way for me to practice multiple skills I've gained over my course. First, LDA using different Ks may be more useful to explore the presence of different topics. Moreover, for sentiment analysis, a custom dictionary relating to property may be useful-- for example, "hidden" is regarded as negative, but for property this may not be the case. Or, one error I noticed is that toilet was given a negative sentiment (disgusting), although this might have even been brought up as a positive point in the review. Nonetheless, this reflects the limitations of sentiment analysis, and more broadly, the field of NLP currently.
+
+# Credits
+I used the `nrc` sentiments dataset for this analysis.
