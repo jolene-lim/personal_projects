@@ -220,10 +220,6 @@ listings_sf <- listings_sf %>%
   st_set_crs(4326) %>%
   st_transform(2263)
 
-listings_sf <- sp::SpatialPointsDataFrame(listings_sf[ , c("longitude", "latitude")], 
-                                          listings_sf[ , 1:ncol(listings_sf)],
-                                          proj4string = sp::CRS("+init=epsg:2263"))
-
 nyc_areas <- httr::GET("http://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services/nynta/FeatureServer/0/query?where=1=1&outFields=*&outSR=4326&f=geojson") %>%
   httr::content() %>%
   rgdal::readOGR()
@@ -246,11 +242,13 @@ popup <- paste0("<b>Neighborhood:</b> ", sentiments_g$NTAName, "<br>",
 leaflet(sentiments_g) %>%
   addProviderTiles(providers$CartoDB.Positron) %>%
   
-  # mean length
+  # add sentiments
   addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
               opacity = 1.0, fillOpacity = 0.5,
               fillColor = ~ binpal_seq(sentiments_g$prop),
               popup = popup) %>%
+  
+  # legend
   addLegend("bottomright", pal = binpal_seq, values = ~ prop,
             title = "Mean Proportion of Negative Sentiments in Neighborhoods",
             opacity = 1)
