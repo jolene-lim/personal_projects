@@ -192,12 +192,17 @@ reviews_count <- reviews_count %>%
 Overall, top 10 most common sentiments (and a common word associated with it) are:
 
 ```{r}
+library(knitr)
+library(kableExtra)
+
 reviews_count %>%
   group_by(sentiment) %>%
   arrange(desc(count)) %>%
   summarize(n_reviews = n(), common_word = first(word)) %>%
   arrange(desc(n_reviews)) %>%
-  slice(2:6)
+  slice(2:6) %>%
+  kable(col.names = c("Sentiment", "No. of Reviews", "Common Word")) %>%
+  kable_styling(bootstrap_options = "hover", full_width = F)
 ```
 Unsurprisingly, an overwhelming amount of the sentiments are positive ones.
 
