@@ -22,7 +22,22 @@ public class Dungeon {
     private HashMap<Integer, Piece> positions = new HashMap<Integer, Piece>();
     private Scanner reader = new Scanner(System.in);
     
-    public Dungeon(int length, int height, int vampires, int moves, boolean vampiresMove) {
+    public Dungeon() {
+        System.out.print("Length of Board: ");
+        int length = Integer.parseInt(reader.nextLine());
+        
+        System.out.print("Width of Board: ");
+        int height = Integer.parseInt(reader.nextLine());
+
+        System.out.print("Number of Vampires: ");
+        int vampires = Integer.parseInt(reader.nextLine());
+
+        System.out.print("Lamp Lifespan (No. of Rounds): ");
+        int moves = Integer.parseInt(reader.nextLine());
+        
+        System.out.print("Do vampires move (true/false): ");
+        boolean vampiresMove = Boolean.parseBoolean(reader.nextLine());
+        
         this.length = length;
         this.height = height;
         this.vampires = vampires;
@@ -42,11 +57,11 @@ public class Dungeon {
             System.out.println();
             
             // Print positions
-            System.out.println("@ " + this.player.getX() + " " + this.player.getY());
+            System.out.println("@ " + this.player.getX() + " " + this.player.getY() + " " + this.player.getPosition());
             
             for (Piece i : this.positions.values()) {
                 if (i.isVamp()) {
-                    System.out.println("v " + i.getX() + " " + i.getY());
+                    System.out.println("v " + i.getX() + " " + i.getY() + " " + i.getPosition());
                 }
             }
             

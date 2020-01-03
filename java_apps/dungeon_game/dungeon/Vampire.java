@@ -14,6 +14,7 @@ public class Vampire implements Piece {
     
     public Vampire(int length, int height) {
         Random rando = new Random();
+        this.length = length;
         this.x = rando.nextInt(length);
         this.y = rando.nextInt(height);
     }
