@@ -31,7 +31,7 @@ def visualize(data, locations, add_dict, manager, routing, solution):
     # Create map
     output_map = folium.Map(
         location = (locations[0][0] - 0.01, locations[0][1] - 0.005),
-        zoom_start = 15,
+        zoom_start = 14,
     )
 
     # Draw route lines
