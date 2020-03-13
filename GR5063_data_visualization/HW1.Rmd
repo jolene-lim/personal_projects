@@ -1,0 +1,506 @@
+---
+title: "R Notebook"
+output:
+  html_notebook
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r Setup, include=FALSE, results='hide', warning=FALSE}
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(plotly)
+library(extrafont)
+library(ggrepel)
+library(DT)
+opts_chunk$set(fig.path="figures/",
+               cache.path="cache/",
+               cache=FALSE,
+               echo=TRUE,
+               message=FALSE,
+               warning=FALSE)
+```
+```{r}
+scf <- readr::read_delim("Data/survey_SCF.txt", delim = ",", progress = FALSE,
+                         col_types = readr::cols(EXPENSHILO = "i",
+                                                 SAVED      = "i"))
+```
+
+```{r Changing data types}
+scf <- scf %>%
+  mutate(NH_MORT = as.numeric(NH_MORT),
+         OTHLOC = as.numeric(OTHLOC),
+         CCBAL = as.numeric(CCBAL),
+         INSTALL = as.numeric(INSTALL),
+         EDN_INST = as.numeric(EDN_INST),
+         VEH_INST = as.numeric(VEH_INST),
+         INCOME = as.numeric(INCOME),
+         HDEBT = as.logical(HDEBT),
+         PAYEDU1 = as.logical(as.numeric(PAYEDU1)),
+         PAYEDU2 = as.logical(as.numeric(PAYEDU2)),
+         PAYEDU3 = as.logical(as.numeric(PAYEDU3)),
+         PAYEDU4 = as.logical(as.numeric(PAYEDU4)),
+         PAYEDU5 = as.logical(as.numeric(PAYEDU5)),
+         PAYEDU6 = as.logical(as.numeric(PAYEDU6)),
+         PAYEDU7 = as.logical(as.numeric(PAYEDU7)),
+         DEBT = as.numeric(DEBT),
+         KIDS = as.numeric(KIDS),
+         EDUC = as.integer(EDUC),
+         RACE = factor(RACE, c(1, 2, 3, 5), c("White", "Black", "Hispanic", "Other")),
+         FOODDELV = as.numeric(FOODDELV),
+         FOODHOME = as.numeric(FOODHOME),
+         FOODAWAY = as.numeric(FOODAWAY))
+```
+
+```{r}
+theme_set(
+  theme_minimal() +
+  theme(text = element_text(family = "Open Sans Light"),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+  )
+```
+
+## 1. Debt over time
+
+This chart highlights how the education debt/income ratio has been increasing in comparison to other major types of loans (excluding mortgage and installments, which tend to be much higher and skew the graph axes). 
+
+```{r}
+scf_income <- scf %>%
+  filter(HDEBT == TRUE & INCOME > 0) %>%
+  select(YEAR, OTHLOC, CCBAL, EDN_INST, VEH_INST, INCOME) %>%
+  mutate(other_perc = OTHLOC / INCOME,
+         credit_card_perc = CCBAL / INCOME,
+         educ_perc = EDN_INST / INCOME,
+         vehicle_perc = VEH_INST / INCOME) %>%
+  select(year = YEAR, other_perc, credit_card_perc, educ_perc, vehicle_perc) %>%
+  group_by(year) %>%
+  summarise_all(list(~ mean(., na.rm = TRUE))) %>%
+  gather(key = 'loan_type', value = "amount", - c(year)) %>%
+  filter(amount < 2) %>%
+  mutate(label = ifelse(year == max(year), loan_type, NA_character_),
+         label = case_when(label == 'educ_perc' ~ 'Education',
+                           label == 'vehicle_perc' ~ 'Vehicle',
+                           label == 'credit_card_perc' ~ 'Credit Card',
+                           label == 'other_perc' ~ 'Other'))
+
+ggplot(scf_income, aes(x = year, y = amount, color = loan_type)) +
+  geom_line(data = subset(scf_income, loan_type != 'educ_perc'), size = 1, alpha = 0.5) +
+  geom_line(data = subset(scf_income, loan_type == 'educ_perc'), size = 1.1) +
+  geom_label_repel(aes(label = label), nudge_x = 100, family = 'Open Sans Light') +
+  geom_hline(yintercept = 0.36, linetype = 'dashed', color = '#1e383c') +
+  geom_text(aes(x = 2018, y = 0.39, color = '#1e383c', label = 'Recommended\nMaximum = 0.36'), 
+            size = 3.5, family = 'Open Sans Light') +
+  scale_x_continuous(limits = c(1989, 2020), breaks = seq(1989, 2016, 3)) +
+  scale_color_manual(values = c('#1e383c', "#8ea6b2", "#c42034", "#8ea6b2", "#8ea6b2")) +
+  labs(x = "", y = "", 
+       title = "Are Student Debts Affecting your Credit Score?",
+       subtitle = "Debt-to-income Ratio of Student Debts are exceeding Recommended Thresholds",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  theme(plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "None",
+        panel.grid = element_blank())
+```
+
+This chart shows the trend in total debt and proportion of debt that is education debt. 
+```{r}
+scf_debtvedn <- scf %>%
+  mutate(edn_perc = EDN_INST / DEBT * 100) %>%
+  group_by(YEAR) %>%
+  summarize(mean_inc = mean(INCOME, na.rm = TRUE),
+            mean_debt = mean(DEBT, na.rm = TRUE),
+            mean_edn = mean(edn_perc, na.rm = TRUE)) %>%
+  mutate(mean_edn = round(mean_edn, 1))
+
+ggplot(scf_debtvedn) +
+  geom_line(aes(x = YEAR, y = mean_debt), size = 2, color = "#F7F7F7") +
+  geom_vline(xintercept = 2007, linetype = "dashed") +
+  geom_point(aes(x = YEAR, y = mean_debt, col = mean_edn, size = mean_edn)) +
+  geom_text(aes(x = YEAR, y = mean_debt, label = paste0(mean_edn, "%")), color = "white",
+            family = "Open Sans Light", size = 3) +
+  scale_x_continuous(breaks = seq(1986, 2016, 3)) +
+  scale_y_continuous(breaks = seq(0, 350000, 50000), limits = c(0, 350000)) +
+  scale_size_continuous(breaks = seq(0, 30, 5), range = c(9, 18), guide = FALSE) +
+  scale_color_gradientn(name = "Education Debt %", labels = NULL, colors = c("#283043", "#c42034")) +
+  labs(x = "", y = "Average Debt ($)",
+       title = "The Snowballing of Student Debt",
+       subtitle = "Although Average Debt Has Been Decreasing, Student Debt Proportion is Snowballing",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "top")
+```
+
+The chart I would recommend depends on the use. I think the second chart gives a better overview of debt trends in relation to student debt, so it is suited for a cover image / as the first main image. However, for readers who are curious to learn more, the first chart can give a better sense of how the trend in student debt is somewhat abnormal, so it can be useful as a supporting image for the article.
+
+## 2. Tell me who you are
+
+This chart shows the average amount of student debt across ages by highest qualification attained. I added some lines and annotations to highlight some interesting trends.
+```{r}
+scf_life <- scf %>%
+  filter(YEAR == 2016,
+         AGE >= 19) %>%
+  mutate(college = case_when(EDUC < 10 ~ 1, EDUC == 10 ~ 2, EDUC == 11 ~ 3,
+                             EDUC == 12 ~ 4, EDUC == 13 ~ 5, EDUC == 14 ~ 6)) %>%
+  group_by(AGE, college) %>%
+  summarize(mean_edndebt = mean(EDN_INST, na.rm = TRUE)) %>%
+  mutate(college = factor(college, 1:6, labels = c("No College", 
+                                                   "Associate Degree (Vocational)",
+                                                   "Associate Degree (Academic)",
+                                                   "Bachelor's",
+                                                   "Master's",
+                                                   "Doctorate/Professional Degree")),
+         college = factor(college, levels = rev(levels(college))))
+
+lifecycle <- ggplot(scf_life) +
+  geom_smooth(aes(x = AGE, y = mean_edndebt, col = college), se = FALSE) +
+  geom_vline(xintercept = 50, linetype = "dashed") +
+  geom_vline(xintercept = 70, linetype = "dashed") +
+  geom_text(aes(x = 30, y = 125000, label = "The College Burden:\nHigh Education Debts\nfor College Degrees"), size = 3, family = "Open Sans Light") +
+  geom_text(aes(x = 60, y = 125000, label = "The Social Immobility Curse:\nAssociate Degrees\ntake longer to pay off"), size = 3, family = "Open Sans Light") +
+  geom_text(aes(x = 85, y = 125000, label = "Debt Free: Welcome to your 70s!"), size = 3, family = "Open Sans Light") +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +
+  scale_y_continuous(breaks = seq(0, 150000, 50000)) +
+  scale_color_manual(values = c("#a0302d", "#fe1100", "#fe875d", "#8ea6b2", "#356288", "#1e383c")) +
+  coord_cartesian(ylim = c(0, 150000)) +
+  labs(x = "Age", y = "", title = "The Lifecycle of Student Debt",
+       subtitle = "Average Education Debt over Age for Different Education Levels",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  theme(legend.title = element_blank(), legend.position = "bottom",
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+lifecycle
+```
+
+This chart shows the amount of debt by household size and race. I chose to highlight the trend that student debt ultimately decreases with too many children, suggesting in larger households not all may get to attend school. Users can also quickly compare how this trend plays out by race.
+```{r}
+scf_kids <- scf %>%
+  filter(YEAR > 2000) %>%
+  mutate(KIDS = as.numeric(case_when(KIDS == 0 ~ 0, KIDS == 1 ~ 1, KIDS == 2 ~ 2, KIDS == 3 ~ 3,
+                                     KIDS > 3 ~ 4))) %>% 
+  group_by(RACE, KIDS) %>%
+  summarize(mean_educ_loan = mean(EDN_INST, na.rm = TRUE)) %>%
+    mutate(tragic = case_when(RACE == "White" & KIDS > 2 ~ 1,
+                            RACE == "White" & KIDS <= 2 ~ 0,
+                            RACE == "Black" & KIDS > 1 ~ 1,
+                            RACE == "Black" & KIDS <= 1 ~ 0,
+                            RACE == "Hispanic" ~ 0)) %>%
+  mutate(KIDS = factor(KIDS, 0:4, c("0", "1", "2", "3", "4\nor more"))) %>%
+  filter(RACE != "Other")
+
+ggplot(scf_kids, aes(x = KIDS, y = mean_educ_loan, fill = as.factor(tragic))) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ RACE) +
+  scale_y_continuous(breaks = seq(0, 10000, 2500)) +
+  scale_fill_manual(values = c("#c42034", "#283043")) +
+  coord_cartesian(ylim = c(0, 10000)) +
+  labs(x = "Number of Kids", y = "", title = "The Opportunity Gap of Children in Large Households",
+       subtitle = "Student Debt Decreases with More Children, Suggesting Not All Get to Attend College,\nbut Patterns Differ by Race",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  theme_minimal() +
+  theme(text = element_text(family = "Open Sans Light"),
+        plot.title = element_text(face = "bold"),
+        panel.grid.major.x = element_blank(),
+        legend.position = "None",
+        strip.text = element_text(face = "bold", size = 11))
+```
+
+I would recommend the lifecycle chart (first chart) as it is very pertinent to readers, especially those the who are considering various educational pathways. The visualization also show a few important and attention-grabbing trends at once, without adding too much clutter, which makes it good for engaging reader attention. In contrast, I feel that the second graph has a few trends that people would want to focus on; ultimately I chose to highlight the fact that student debt somehow decreases, but some readers may want to focus on the actual impact of an additional child (which would require e.g. labelling the difference). Hence, depending on the use (e.g. whether it is supporting a graph about debt in larger households or used as a cover image in which case people may be more curious about differences), it may be distracting / disengaging for the reader.
+
+## 3. Wealth and Income Distribution
+
+I created a heatmap of education debt across income and asset categories labelled the top 3 categories to highlight how these have much higher debt.
+```{r}
+scf_debt_map <- scf %>%
+  filter(YEAR == 2016) %>%
+  group_by(INCCAT, NWCAT) %>%
+  summarize(mean_edn_debt = mean(EDN_INST, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(NWCAT = factor(NWCAT, 1:5, labels = c("0-25%", "25-49%", "50-74%", "75-89%", "90-100%")),
+         INCCAT = factor(INCCAT, 1:6, labels = c("0-19%", "20-39%", "40-59%", "60-79%", "80-89%", "90-100%")),
+         mean_edn_debt = round(mean_edn_debt, 0)) %>%
+  arrange(desc(mean_edn_debt))
+
+seg <- tibble(x0 = c(2.5, 2.5, 4.5, 4.5, 5.5, 5.5), x1 = c(2.5, 4.5, 4.5, 5.5, 5.5, 6.5),
+              y0 = c(0.5, 1.5, 1.5, 2.5, 2.5, 1.5), y1 = c(1.5, 1.5, 2.5, 2.5, 1.5, 1.5))
+
+ggplot(scf_debt_map) +
+  geom_tile(aes(x = INCCAT, y = NWCAT, fill = mean_edn_debt)) +
+  geom_text(data = scf_debt_map[1:3, ], aes(x = INCCAT, y = NWCAT, label = mean_edn_debt),
+            color = "#FFFFFF", family = "Open Sans Light") +
+  scale_fill_gradientn(name = "Average Student Debt ($)", labels = NULL, colors = c("#283043", "#c42034")) +
+  labs(x = "Income Category", y = "Net Worth Category", 
+       title = "The Struggle for Social Mobility",
+       subtitle = "High Income, Low Net Worth Individuals\nhave a Disproportionate Amount of Student Debt",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  theme(plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "bottom",
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+I would recommend this heatmap style as it succintly captures the type of people most affected by student debt - those who do not come from wealthy backgrounds but are trying to rise up the social mobility ladder.
+
+## 4. Going broke
+I created a "stacked bar chart" type of chart that allows users to quickly compare debt amount among debt types, while also providing the total on the left to give users a baseline of comparison. Through colors and annotation, I gave a sense of difference - e.g. the total is not labelled with a number to show users that it is the overall chart and that the numbered charts are subsets. The use of color also can quickly highlight how education debt does not fit a certain pattern. 
+
+```{r}
+scf_broke <- scf %>%
+  filter(YEAR == 2016) %>%
+  mutate(house_perc = NH_MORT,
+         install_perc = INSTALL,
+         edn_perc = EDN_INST,
+         other_perc = OTHLOC,
+         credit_card_perc = CCBAL,
+         vehicle_perc = VEH_INST) %>%
+  select(BNKRUPLAST5, DEBT, house_perc, install_perc, edn_perc, other_perc,
+         credit_card_perc, vehicle_perc) %>%
+  group_by(BNKRUPLAST5) %>%
+  summarize_all(list(~ mean(., na.rm = TRUE))) %>%
+  ungroup() %>%
+  gather(key = "debt", value = "amount", - BNKRUPLAST5) %>%
+  group_by(debt) %>%
+  mutate(avg = mean(amount)) %>%
+  ungroup() %>%
+  mutate(color = case_when(debt == "DEBT" ~ 3,
+                           BNKRUPLAST5 == 0 ~ 2,
+                           TRUE ~ 1),
+         color = ifelse(debt == "edn_perc", ifelse(BNKRUPLAST5 == 0, 1, 2), color),
+         BNKRUPLAST5 = factor(BNKRUPLAST5, 0:1, c("Non-Bankrupt", "Bankrupt")),
+         debt = factor(debt, c("DEBT", "house_perc", "install_perc", "vehicle_perc",
+                               "other_perc", "edn_perc", "credit_card_perc"),
+                       c("Total Debt", "1. Mortgage", "2. Installment", "3. Vehicle", 
+                         "4. Other", "5. Education", "6. Credit Card")))
+
+ggplot(scf_broke, aes(x = BNKRUPLAST5, y = amount, fill = as.factor(color))) + 
+  geom_bar(stat = "identity", width = 0.3) +
+  coord_flip() +
+  facet_grid(~ debt, scales = "free") +
+  labs(x = "", y = "Debt Types\n(sorted by value)",
+       title = "Be Careful - Student Debt is Non-Dischargeable",
+       subtitle = "Bankrupt Households have Smaller Debts Across All Debt Types, Except Education",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  scale_y_continuous(breaks = NULL, labels = NULL) +
+  scale_fill_manual(values = c("#31465a", "#c42034", "#000000")) +
+  annotate("segment", x = 0.5, xend = 2.5, y = 0, yend = 0, colour = "#E4E4E4")+
+  theme(text = element_text(family = "Open Sans Light"),
+        plot.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold", size = 7.5),
+        legend.position = "None")
+```
+
+I wanted to show how Gen Xs of different education type burdens have different food spending behaviours. I annotated the graph with lines to segment and create categories of Gen Xs. Through size and color I also wanted to highlight those who are in large debt and note to the reader how these people do not belong in the "non-thrifty" category.
+```{r}
+scf_food <- scf %>%
+  filter(YEAR >= 2010, FAMSTRUCT == "2", AGE <= 35) %>%
+  mutate(foodpaid = FOODDELV + FOODAWAY,
+         foodtotal = foodpaid + FOODHOME,
+         edn2inc = EDN_INST / INCOME) %>%
+  arrange(edn2inc)
+
+avg_total <- mean(scf_food$foodtotal)
+
+ggplot(scf_food, aes(x = FOODHOME, y = foodpaid)) +
+  geom_point(aes(color = edn2inc, size = edn2inc), alpha = 0.8, shape = 16) +
+  annotate("segment", x = avg_total / 2, y = avg_total / 2, xend = 10000, yend = 10000, 
+           size = 1, linetype = "solid", color = "#A2A2A2") +
+  annotate("segment", x = 0, y = avg_total, xend = avg_total, yend = 0, 
+           size = 1, linetype = "solid", color = "#A2A2A2") +
+  geom_text(aes(x = 1000, y = 3000, 
+                label = "Below Average\n Food Expenditure"),
+            size = 3, family = "Open Sans Light") +
+  geom_text(aes(x = 3500, y = 8500, label = "Prefers Eating Out"),
+            size = 3, family = "Open Sans Light") +
+  geom_text(aes(x = 7500, y = 4500, label = "Prefers Eating at Home"),
+            size = 3, family = "Open Sans Light") +
+  scale_x_continuous(limits = c(0, 10000), breaks = seq(0, 10000, 2500)) +
+  scale_y_continuous(limits = c(0, 10000), breaks = seq(0, 10000, 2500)) +
+  scale_color_gradientn(colors = c("#DEDEDE", "#c42034"), guide = "legend") +
+  scale_size_continuous(range = c(2, 10)) +
+  labs(x = "Food at Home ($)", y = "Food Outside ($)",
+       size = "Education Debt:Income", color = "Education Debt:Income",
+       title = "The Spendthrift Gen-X",
+       subtitle = "Gen-Xs With High Education Debt Ratios Save Money by Cooking\nRather Than Eating Out",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  theme(panel.grid = element_blank(),
+        legend.position = "top")
+```
+
+I would recommend the first chart on debt types and bankruptcy as it does instantly show (through color) how education debt affects those struggling with debt, while allowing interested readers to explore more by looking at the axes and bars. As most readers probably have taken some form of loan in their lives, this may be more relatable to a wider audience. In contrast, because the second graph focuses on Gen Xs and the belief that Gen Xs are "bad with money", it may only relate to Gen Xs / people who hold that belief, hence may be less engaging. Also, the latter chart doesn't deal with bankruptcy directly (because there weren't any strong trends there), and so may be less engaging as generally bankruptcy is a more sensational & clickbait-y topic. Finally, unfortunately in order to make the graph more interesting more annotations had to be added, but that created some clutter.
+
+# Interactivity
+## 5. Make two plots interactive
+I will make the graph on food spending and student debt interactive as readers may want to engage with the plot and figure out which area in the chart they belong to. This way, I can also give the reader additional statistics that could not fit in the graph, e.g. the average amount of education debt in each segment of the graph. I could also simplify the graph as it is slightly cluttered now.
+
+```{r}
+scf_food_add <- scf_food %>%
+  mutate(edn2inc = ifelse(!is.finite(edn2inc), NA, edn2inc)) %>%
+  mutate(category = case_when(foodtotal <= avg_total ~ 1,
+                              foodpaid > FOODHOME ~ 2,
+                              foodpaid <= FOODHOME ~ 3)) %>%
+  group_by(category) %>%
+  summarize(count = n(), mean = round(mean(edn2inc, na.rm = TRUE), 2))
+
+anno <- tibble(id = c(1, 2, 3),
+               x = c(1000, 3500, 7500),
+               y = c(3000, 8500, 4500),
+               lab = c("Below Average\n Food Expenditure", "Prefers Eating Out", "Prefers Eating at Home")) %>%
+  left_join(scf_food_add, by = c("id" = "category")) %>%
+  mutate(text = paste0("<b>", str_replace(lab, "\n", ""), "</b>",
+                       "<br><b>Count</b>: ", count,
+                       "<br><b>Average Education Debt to Income Ratio</b>: ", mean))
+  
+food <- ggplot(scf_food, aes(x = FOODHOME, y = foodpaid)) +
+  geom_point(aes(color = edn2inc, size = edn2inc, 
+             text = paste0("<b>Homecooked Food Spending</b>: $", FOODHOME,
+                           "<br><b>Outside Food Spending</b>: $", foodpaid,
+                           "<br><b>Total Food Spending</b>: $", foodtotal,
+                           "<br><b>Education Debt-to-Income</b>: ", round(edn2inc, 0))),
+             alpha = 0.8, shape = 16) +
+  annotate("segment", x = avg_total / 2, y = avg_total / 2, xend = 10000, yend = 10000, 
+           size = 1, linetype = "solid", color = "#A2A2A2") +
+  annotate("segment", x = 0, y = avg_total, xend = avg_total, yend = 0, 
+           size = 1, linetype = "solid", color = "#A2A2A2") +
+  geom_text(data = anno, aes(x = x, y = y, label = lab, text = text), size = 3, family = "Open Sans Light") +
+  scale_x_continuous(limits = c(0, 10000), breaks = seq(0, 10000, 2500)) +
+  scale_y_continuous(limits = c(0, 10000), breaks = seq(0, 10000, 2500)) +
+  scale_color_gradientn(colors = c("#DEDEDE", "#c42034"), guide = "legend") +
+  scale_size_continuous(range = c(2, 10)) +
+  labs(x = "Food at Home ($)", y = "Food Outside ($)",
+       size = "Education Debt:Income", color = "Education Debt:Income",
+       title = "The Spendthrift Gen-X",
+       subtitle = "Gen-Xs With High Education Debt Ratios Save Money by Cooking\nRather Than Eating Out",
+       caption = "Source: Survey of Consumer Finances (2016)") +
+  theme(panel.grid = element_blank())
+
+ggplotly(food, tooltip = "text")
+```
+
+I will also make the "Lifecycle of Education Debt" graph interactive as this is another graph where I believe people may want to "find" themselves in. It could also allow users to zoom into subsets of the graphs, e.g. magnify the "welcome to your debt free 70s" section and compare the degree types hit a average 0 debt amount fastest. One important aspect of producing this graph is also to remove negative values produced by geom_smooth in the tooltips, so as to not confuse readers.
+
+```{r}
+lifecycleint <- ggplotly(lifecycle, width = 900)
+
+for (i in 1:6) {
+  tooltip <- lifecycleint$x$data[[i]]$text
+  tooltip <- as_tibble(tooltip) %>%
+    mutate(age = str_extract(value, "^AGE:[:space:]+[:digit:][:digit:]*"),
+           debt = str_extract(value, "mean_edndebt:[:space:]+-?[:digit:]+.[:digit:]+"),
+           college = str_extract(value, "college:[:space:]+(.)+")) %>%
+    mutate(age = str_remove(age, "AGE: "),
+           debt = str_remove(debt, "mean_edndebt: "),
+           college = str_remove(college, "college: "),
+           debt = round(as.numeric(debt), 2),
+           debt = ifelse(debt < 0, 0, debt),
+           clean = paste0("<b>", college, "</b>",
+                          "<br><b>Age</b>: ", age,
+                          "<br><b>Education Debt-to-Income</b>: $", debt))
+  lifecycleint$x$data[[i]]$text <- tooltip$clean
+}
+  
+lifecycleint %>%
+  layout(showlegend = FALSE)
+```
+
+
+## 6. Data Table
+I will create a table from the dataset used to create the race / household vs debt graph. As I mentioned, different users may want different types of information from the same graph, so creating an interactive datatable will allow them to explore the data according to their needs. For this, it was important to create column visibility toggles to allow users to focus on information they require. I also coloured values that decreased in red to mirror information in the graph. Finally, I added some bars in the background for users to easily compare across race and across number of kids.
+
+```{r}
+scf_kids_dt <- scf %>%
+  group_by(YEAR, RACE, KIDS) %>%
+  summarize(mean_educ_loan = round(mean(EDN_INST, na.rm = TRUE), 2)) %>%
+  spread(RACE, mean_educ_loan)
+
+scf_kids_dt_exp <- crossing(unique(scf_kids_dt$YEAR), unique(scf_kids_dt$KIDS))
+colnames(scf_kids_dt_exp) <- c("YEAR", "KIDS")
+scf_kids_dt <- scf_kids_dt_exp %>%
+  left_join(scf_kids_dt, by = c("YEAR" = "YEAR", "KIDS" = "KIDS"))
+
+scf_kids_dt <- scf_kids_dt %>%
+  filter(KIDS < 10) %>%
+  mutate(White = ifelse(White == 0, NA, White),
+         Black = ifelse(Black == 0, NA, Black),
+         Hispanic = ifelse(Hispanic == 0, NA, Hispanic),
+         Other = ifelse(Other == 0, NA, Other)) %>%
+  arrange(desc(YEAR), KIDS)
+
+white_diff <- c()
+black_diff <- c()
+hisp_diff <- c()
+other_diff <- c()
+
+for (year in unique(scf_kids_dt$YEAR)) {
+  white_diff <- c(white_diff, NA, diff(unlist(scf_kids_dt[scf_kids_dt$YEAR == year, "White"])))
+  black_diff <- c(black_diff, NA, diff(unlist(scf_kids_dt[scf_kids_dt$YEAR == year, "Black"])))
+  hisp_diff <- c(hisp_diff, NA, diff(unlist(scf_kids_dt[scf_kids_dt$YEAR == year, "Hispanic"])))
+  other_diff <- c(other_diff, NA, diff(unlist(scf_kids_dt[scf_kids_dt$YEAR == year, "Other"])))
+  }
+
+scf_kids_dt$white_diff = round(white_diff, 2)
+scf_kids_dt$black_diff = round(black_diff, 2)
+scf_kids_dt$hisp_diff = round(hisp_diff, 2)
+scf_kids_dt$other_diff = round(other_diff, 2)
+
+scf_kids_dt <- scf_kids_dt %>%
+  mutate(white_inc = ifelse(white_diff >= 0, 1, 0),
+         black_inc = ifelse(black_diff >= 0, 1, 0),
+         hisp_inc = ifelse(hisp_diff >= 0, 1, 0),
+         other_inc = ifelse(other_diff >= 0, 1, 0)) %>%
+  mutate(White = ifelse(is.na(white_diff) & KIDS != 0, NA, White),
+         Black = ifelse(is.na(black_diff) & KIDS != 0, NA, Black),
+         Hispanic = ifelse(is.na(hisp_diff) & KIDS != 0, NA, Hispanic),
+         Other = ifelse(is.na(other_diff) & KIDS != 0, NA, Other))
+
+scf_kids_dt %>%
+  datatable(colnames = c("Year", "Number of Children", "White", "Black", "Hispanic", "Other",
+                         "Impact of An Additional Child, White", "Impact of An Additional Child, Black",
+                         "Impact of An Additional Child, Hispanic", "Impact of An Additional Child, Other",
+                         "", "", "", ""),
+            options = list(
+              dom = "Bfrtip",
+              buttons = list(list(extend = "colvis", columns = 1:10)),
+              initComplete = JS(
+                "function(settings, json) {",
+                "$('body').css({'font-family': 'Open Sans Light'});",
+                "$('tr').css({'background': '#fff'});",
+                "}"
+                ),
+              columnDefs = list(list(targets = c(0, 11:14), visible = FALSE))
+              ),
+            extensions = c("Buttons", "Responsive")
+            ) %>%
+  formatStyle(
+    c("YEAR", "KIDS"),
+    background = "#D3E7EF"
+  ) %>%
+  formatStyle(
+    "White", "white_inc",
+    color = styleEqual(c(1, 0), c("#000", "#c42034"))
+  ) %>%
+    formatStyle(
+    "Black", "black_inc",
+    color = styleEqual(c(1, 0), c("#000", "#c42034"))
+  ) %>%
+  formatStyle(
+    "Hispanic", "hisp_inc",
+    color = styleEqual(c(1, 0), c("#000", "#c42034"))
+  ) %>%
+  formatStyle(
+    "Other", "other_inc",
+    color = styleEqual(c(1, 0), c("#000", "#c42034"))
+  ) %>%
+  formatStyle(
+    c("White", "Black", "Hispanic", "Other"),
+    background = styleColorBar(range(scf_kids_dt[ , 3:6], na.rm = TRUE), '#E7E7E7'),
+    backgroundSize = '98% 88%',
+    backgroundRepeat = 'no-repeat',
+    backgroundPosition = 'left')
+```
+
