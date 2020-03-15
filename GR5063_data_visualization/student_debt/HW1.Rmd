@@ -404,7 +404,7 @@ for (i in 1:6) {
   lifecycleint$x$data[[i]]$text <- tooltip$clean
 }
   
-lifecycleint %>%
+lifecycleint <- lifecycleint %>%
   layout(showlegend = FALSE)
 ```
 
@@ -458,7 +458,7 @@ scf_kids_dt <- scf_kids_dt %>%
          Hispanic = ifelse(is.na(hisp_diff) & KIDS != 0, NA, Hispanic),
          Other = ifelse(is.na(other_diff) & KIDS != 0, NA, Other))
 
-scf_kids_dt %>%
+datatable <- scf_kids_dt %>%
   datatable(colnames = c("Year", "Number of Children", "White", "Black", "Hispanic", "Other",
                          "Impact of An Additional Child, White", "Impact of An Additional Child, Black",
                          "Impact of An Additional Child, Hispanic", "Impact of An Additional Child, Other",
